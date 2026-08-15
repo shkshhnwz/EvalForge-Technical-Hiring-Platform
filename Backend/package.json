@@ -1,0 +1,30 @@
+{
+  "name": "evalforge-technical-hiring-platform",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+  "start": "node server.js",
+  "dev": "nodemon server.js"
+},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shkshhnwz/EvalForge-Technical-Hiring-Platform.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/shkshhnwz/EvalForge-Technical-Hiring-Platform/issues"
+  },
+  "homepage": "https://github.com/shkshhnwz/EvalForge-Technical-Hiring-Platform#readme",
+  "keywords": [],
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.9.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
