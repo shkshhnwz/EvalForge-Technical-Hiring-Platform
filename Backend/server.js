@@ -8,8 +8,8 @@ const app = express();
 const PORT = process.env.PORT;
 
 //Imports
-const authMiddleware = require('./middleware/auth');
-const UserRouter = require('./routes/UserRoutes');
+const authMiddleware = require('./src/modules/Authentication&Roles/auth.middleware');
+const UserRouter = require('./src/modules/Authentication&Roles/auth.routes');
 
 // Middleware
 app.use(cors());
