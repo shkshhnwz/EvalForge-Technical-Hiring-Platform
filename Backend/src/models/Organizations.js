@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const OrganizationSchema = new mongoose.Schema(
   {
-    name: {
+    Orgname: {
       type: String,
       required: true,
       trim: true

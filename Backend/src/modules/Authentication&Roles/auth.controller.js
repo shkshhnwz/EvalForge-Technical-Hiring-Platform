@@ -1,8 +1,6 @@
 const User = require('../../models/Users');
-const Organization = require('../../models/Organizations');
+
 const RefreshToken = require('../../models/RefreshToken');
-const Assessment = require('../../models/Assessment');
-const AssessmentAttempt = require('../../models/AssesmentAttempts');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -160,4 +158,6 @@ exports.logout = async (req, res) => {
         return res.status(500).json({ message: 'Server error' });
     }
 }
+
+exports.generateToken = generateToken;
 

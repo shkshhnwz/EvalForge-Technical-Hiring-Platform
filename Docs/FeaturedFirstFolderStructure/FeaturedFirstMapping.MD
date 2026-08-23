@@ -78,3 +78,7 @@ Here is what you should build inside each of these folders as you progress featu
 * **What to add here:**
   * `email.service.js` (Nodemailer setup with SendGrid/Resend)
   * `templates/` (HTML email templates for candidate invites, reminders, and score completion alerts)
+
+
+  Data Flow of First Feature:
+![alt text](DataFlowOfFirstFeature.png)
