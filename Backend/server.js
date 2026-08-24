@@ -13,6 +13,8 @@ const authMiddleware = require('./src/modules/Authentication&Roles/auth.middlewa
 const UserRouter = require('./src/modules/Authentication&Roles/auth.routes');
 const OrgRouter = require('./src/modules/Organizations/org.routes');
 const AssessmentRouter = require('./src/modules/Assessments/assesment.routes');
+const QuestionRouter = require('./src/modules/Questions/question.routes');
+
 
 // Middleware
 app.use(cors());
@@ -23,6 +25,8 @@ app.use(cookieParser());
 app.use('/api/users',UserRouter);
 app.use('/api/organization',OrgRouter);
 app.use('/api/assessments',AssessmentRouter);
+app.use('/api/questions', QuestionRouter);
+
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
