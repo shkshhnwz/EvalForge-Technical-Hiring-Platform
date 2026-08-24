@@ -1,9 +1,166 @@
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const multer = require('multer');
+const csv = require('csv-parser');
+const fs = require('fs');
+const Questions = require('../../models/Question');
+const { sendAssesmentInvite } = require('../Notifications/email.service');
 const Assessment = require('../../models/Assessment');
 const AssessmentAttempt = require('../../models/AssesmentAttempts');
 const User = require('../../models/Users');
 const { generateToken } = require('../Authentication&Roles/auth.controller');
+
+//Creation of Assesment
+exports.createAssesment = async (req, res) => {
+    try {
+        const { title, description, timeLimit, allowedLanguages, questions } = req.body;
+        const orgId = req.user.orgId;
+        if (!title || !timeLimit) {
+            return res.status(400).json({ message: "Title and time limit are required." });
+        }
+        if (questions && questions.length > 0) {
+            const count = await Question.countDocuments({ _id: { $in: questions } });
+            if (count !== questions.length) {
+                return res.status(400).json({ message: "One or more question IDs are invalid." });
+            }
+        }
+
+        const newAssesment = await Assessment.create({
+            title,
+            description,
+            timeLimit,
+            allowedLanguages: allowedLanguages || ['JavaScript', 'python', 'cpp', 'java'],
+            questions: questions || [],
+            orgId,
+            status: 'draft'
+        });
+        return res.status(201).json({
+            message: "Assessment created successfully",
+            assessment: newAssessment
+        });
+
+    } catch (err) {
+        console.error("Create assessment error:", err);
+        return res.status(500).json({ message: "Server error while creating assessment." });
+    }
+}
+
+exports.getRecruiterAssessments = async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const assessments = await Assessment.find({ orgId }).populate('questions', 'title difficulty scoreWeight');
+        return res.status(200).json(assessments);
+    } catch (err) {
+        console.error("Get assessments error:", err);
+        return res.status(500).json({ message: "Server error." });
+    }
+};
+
+exports.updateAssessment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orgId = req.user.orgId;
+        const { title, description, timeLimit, allowedLanguages, status, questions } = req.body;
+        const assessment = await Assessment.findOne({ _id: id, orgId });
+        if (!assessment) {
+            return res.status(404).json({ message: "Assessment not found or unauthorized." });
+        }
+        if (title) assessment.title = title;
+        if (description !== undefined) assessment.description = description;
+        if (timeLimit) assessment.timeLimit = timeLimit;
+        if (allowedLanguages) assessment.allowedLanguages = allowedLanguages;
+        if (status) assessment.status = status;
+        if (questions) assessment.questions = questions;
+        await assessment.save();
+        return res.status(200).json({ message: "Assessment updated successfully", assessment });
+    } catch (err) {
+        console.error("Update assessment error:", err);
+        return res.status(500).json({ message: "Server error." });
+    }
+};
+
+exports.bulkEmailInvite = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { candidates } = req.body;
+        const { orgId } = req.user.orgId;
+        const assessment = await Assessment.findOne({ _id: id, orgId });
+        if (!assessment) {
+            return res.status(404).json({ message: "Assessment not found." });
+        }
+        if (!candidates || !Array.isArray(candidates) || candidates.length === 0) {
+            return res.status(400).json({ message: "Candidates array is required." });
+        }
+        const invitePromises = candidates.map(candidate => {
+            const inviteLink = `${process.env.FRONTEND_URL}/candidate/join/${assessment.inviteToken}`;
+            return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
+                .catch(err => {
+                    console.error(`Failed to invite ${candidate.email}`, err);
+                })
+        });
+        await Promise.all(invitePromises);
+        return res.status(200).json({ message: "Candidates invited successfully" });
+
+
+    } catch (err) {
+        console.error("Bulk invite error:", err);
+        return res.status(500).json({ message: "Server error." });
+    }
+}
+
+exports.csvInvite = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orgId = req.user.orgId;
+        if (!req.file) {
+            return res.status(400).json({ message: "CSV file is required." });
+        }
+        const assessment = await Assessment.findOne({ _id: id, orgId });
+        if (!assessment) {
+            // Cleanup uploaded file
+            fs.unlinkSync(req.file.path);
+            return res.status(404).json({ message: "Assessment not found." });
+        }
+        const candidates = [];
+        // Read CSV stream and parse rows
+        fs.createReadStream(req.file.path)
+            .pipe(csv())
+            .on('data', (row) => {
+                // Expects headers "name" and "email" (case-insensitive checking)
+                const name = row.name || row.Name || row.NAME;
+                const email = row.email || row.Email || row.EMAIL;
+                if (email) {
+                    candidates.push({ name: name ? name.trim() : '', email: email.trim() });
+                }
+            })
+            .on('end', async () => {
+                // Delete temp file after streaming
+                fs.unlinkSync(req.file.path);
+                if (candidates.length === 0) {
+                    return res.status(400).json({ message: "No valid emails found in the CSV." });
+                }
+                // Send Emails
+                const invitePromises = candidates.map(candidate => {
+                    const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
+                    return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
+                        .catch(err => console.error(`Failed to send CSV email to ${candidate.email}:`, err));
+                });
+                await Promise.all(invitePromises);
+                return res.status(200).json({ message: `Successfully invited ${candidates.length} candidates from CSV.` });
+            })
+            .on('error', (err) => {
+                console.error("Error reading CSV stream:", err);
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(500).json({ message: "Failed parsing the CSV file." });
+            });
+    } catch (err) {
+        console.error("CSV invite error:", err);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        return res.status(500).json({ message: "Server error." });
+    }
+};
+
+
 
 const joinAssessment = async (req, res) => {
     try {
@@ -96,4 +253,4 @@ const joinAssessment = async (req, res) => {
 };
 
 exports.joinAssessment = joinAssessment;
-exports.joinAssesment = joinAssessment; // Alias for single-s spelling compatibility
+exports.joinAssesment = joinAssessment; // Alias for single-s spelling compatibility
