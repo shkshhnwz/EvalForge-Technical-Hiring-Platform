@@ -12,6 +12,14 @@ const TestCaseSchema = new mongoose.Schema({
   isHidden: {
     type: Boolean,
     default: false
+  },
+  cpuLimit: {
+    type: Number, // in seconds
+    default: 2
+  },
+  memoryLimit: {
+    type: Number, // in KB
+    default: 512000
   }
 }, { _id: false }); // Disable _id for simple subdocuments if desired, or keep it. Let's keep it disabled for cleaner array elements.
 

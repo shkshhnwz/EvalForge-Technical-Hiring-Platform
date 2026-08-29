@@ -12,7 +12,13 @@ const TestCaseResultSchema = new mongoose.Schema({
   memory: {
     type: Number, // memory usage in kilobytes
     default: 0
-  }
+  },
+  status: {
+    type: String, // 'accepted', 'wrong_answer', 'time_limit_exceeded', 'runtime_error', 'compile_error'
+    required: true
+  },
+  stdout: String,
+  stderr: String
 }, { _id: false });
 
 const SubmissionSchema = new mongoose.Schema(
@@ -42,7 +48,8 @@ const SubmissionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit_exceeded', 'memory_limit_exceeded', 'runtime_error', 'compile_error'],
+      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit_exceeded', 'memory_limit_exceeded', 'runtime_error', 'compile_error',    'Execution Service Unavailable'
+],
       default: 'pending'
     },
     testCaseResults: [TestCaseResultSchema],
