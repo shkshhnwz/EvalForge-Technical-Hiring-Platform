@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import AssessmentLanding from './modules/AssessmentLanding';
-import AssessmentDashboard from './modules/AssessmentDashboard';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { SignUp, Login } from './modules/authentication';
+import AssessmentLanding from './modules/Assesment/AssesmentLanding';
+import AssessmentDashboard from './modules/Assesment/AssesmentDashboard';
 
 // Mock assessment context (in production, fetch this from /api/assessments/:id)
 const MOCK_ASSESSMENT = {
@@ -21,7 +23,7 @@ const MOCK_ASSESSMENT = {
   ]
 };
 
-export default function App() {
+function AssessmentWorkspace() {
   const [view, setView] = useState('instructions'); // 'instructions' or 'dashboard'
 
   const handleFinalSubmit = (codeDrafts) => {
@@ -48,3 +50,18 @@ export default function App() {
     </>
   );
 }
+
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Navigate to="/signup" replace />} />
+        <Route path="/signup" element={<SignUp />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/assessment" element={<AssessmentWorkspace />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
