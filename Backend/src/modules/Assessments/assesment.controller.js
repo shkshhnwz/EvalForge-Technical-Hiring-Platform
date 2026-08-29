@@ -162,7 +162,7 @@ exports.csvInvite = async (req, res) => {
 
 
 
-const joinAssessment = async (req, res) => {
+exports.joinAssessment = async (req, res) => {
     try {
         const { inviteToken } = req.params;
         const { name, email } = req.body;
@@ -252,5 +252,86 @@ const joinAssessment = async (req, res) => {
     }
 };
 
-exports.joinAssessment = joinAssessment;
-exports.joinAssesment = joinAssessment; // Alias for single-s spelling compatibility
+
+exports.startCandidateAssessment = async (req, res) => {
+  try {
+    const candidateId = req.user.id; // From requireAuth
+
+    // 1. Find the active attempt
+    const attempt = await AssessmentAttempt.findOne({
+      candidateId,
+      status: 'started'
+    }).populate({
+      path: 'assessmentId',
+      populate: {
+        path: 'questions',
+        select: 'title description constraints difficulty starterCode testCases scoreWeight'
+      }
+    });
+
+    if (!attempt) {
+      return res.status(400).json({ message: "No active assessment attempt found." });
+    }
+
+    const assessment = attempt.assessmentId;
+
+    // 2. Filter hidden test cases from each question before sending
+    const sanitizedQuestions = assessment.questions.map(q => {
+      const sanitizedTestCases = q.testCases.filter(tc => !tc.isHidden);
+      return {
+        _id: q._id,
+        title: q.title,
+        description: q.description,
+        constraints: q.constraints,
+        difficulty: q.difficulty,
+        starterCode: q.starterCode,
+        scoreWeight: q.scoreWeight,
+        testCases: sanitizedTestCases // only contains visible sample cases
+      };
+    });
+
+    return res.status(200).json({
+      assessment: {
+        _id: assessment._id,
+        title: assessment.title,
+        description: assessment.description,
+        timeLimit: assessment.timeLimit,
+        questions: sanitizedQuestions
+      },
+      startedAt: attempt.startedAt
+    });
+
+  } catch (err) {
+    console.error("Start assessment error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+};
+
+
+exports.submitCandidateAssessment = async (req, res) => {
+  try {
+    const candidateId = req.user.id;
+
+    // Find the current started attempt and update it
+    const attempt = await AssessmentAttempt.findOneAndUpdate(
+      { candidateId, status: 'started' },
+      { 
+        status: 'submitted', 
+        submittedAt: new Date() 
+      },
+      { new: true }
+    );
+
+    if (!attempt) {
+      return res.status(400).json({ message: "No active attempt found to submit." });
+    }
+
+    return res.status(200).json({ 
+      message: "Assessment submitted successfully.", 
+      attempt 
+    });
+  } catch (err) {
+    console.error("Submit assessment error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+};

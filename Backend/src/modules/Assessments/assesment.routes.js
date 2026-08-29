@@ -14,6 +14,8 @@ const {
 
 const { requireAuth, authorizeRoles } = require('../Authentication&Roles/auth.middleware');
 
+
+
 // Public endpoint for candidates to join via token link
 AssessmentRouter.post('/join/:inviteToken', joinAssessment);
 
@@ -21,6 +23,11 @@ AssessmentRouter.post('/join/:inviteToken', joinAssessment);
 AssessmentRouter.post('/', requireAuth, authorizeRoles('recruiter'), createAssessment);
 AssessmentRouter.get('/', requireAuth, authorizeRoles('recruiter'), getRecruiterAssessments);
 AssessmentRouter.put('/:id', requireAuth, authorizeRoles('recruiter'), updateAssessment);
+
+// Candidate-specific active assessment endpoints
+AssessmentRouter.get('/active/start', requireAuth, startCandidateAssessment);
+AssessmentRouter.post('/active/submit', requireAuth, submitCandidateAssessment);
+
 
 // Inviting candidates
 AssessmentRouter.post('/:id/invite/email', requireAuth, authorizeRoles('recruiter'), bulkEmailInvite);
