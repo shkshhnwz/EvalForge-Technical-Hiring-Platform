@@ -7,6 +7,7 @@ const Questions = require('../../models/Question');
 const { sendAssesmentInvite } = require('../Notifications/email.service');
 const Assessment = require('../../models/Assessment');
 const AssessmentAttempt = require('../../models/AssesmentAttempts');
+const Submission = require('../../models/Submissions');
 const User = require('../../models/Users');
 const { generateToken } = require('../Authentication&Roles/auth.controller');
 
@@ -307,31 +308,98 @@ exports.startCandidateAssessment = async (req, res) => {
   }
 };
 
-
 exports.submitCandidateAssessment = async (req, res) => {
   try {
     const candidateId = req.user.id;
-
-    // Find the current started attempt and update it
-    const attempt = await AssessmentAttempt.findOneAndUpdate(
-      { candidateId, status: 'started' },
-      { 
-        status: 'submitted', 
-        submittedAt: new Date() 
-      },
-      { new: true }
-    );
-
+    // 1. Find active attempt and populate assessment and its questions
+    const attempt = await AssessmentAttempt.findOne({
+      candidateId,
+      status: 'started'
+    }).populate({
+      path: 'assessmentId',
+      populate: {
+        path: 'questions',
+        select: 'title difficulty scoreWeight testCases'
+      }
+    });
     if (!attempt) {
       return res.status(400).json({ message: "No active attempt found to submit." });
     }
-
-    return res.status(200).json({ 
-      message: "Assessment submitted successfully.", 
-      attempt 
+    const assessment = attempt.assessmentId;
+    const questions = assessment.questions || [];
+    // 2. Fetch all submissions by this candidate for this assessment
+    const candidateSubmissions = await Submission.find({
+      candidateId,
+      assessmentId: assessment._id
+    });
+    // 3. Calculate score per question (taking the highest score achieved for each question)
+    let totalScore = 0;
+    let maxPossibleScore = 0;
+    const questionBreakdown = [];
+    for (const question of questions) {
+      maxPossibleScore += question.scoreWeight || 0;
+      // Find all submissions for this question
+      const qSubmissions = candidateSubmissions.filter(
+        s => s.questionId.toString() === question._id.toString()
+      );
+      // Pick highest scoring submission
+      let bestScore = 0;
+      let bestSubmission = null;
+      let passedTestCases = 0;
+      const totalTestCases = question.testCases ? question.testCases.length : 0;
+      if (qSubmissions.length > 0) {
+        // Sort descending by score
+        qSubmissions.sort((a, b) => (b.score || 0) - (a.score || 0));
+        bestSubmission = qSubmissions[0];
+        bestScore = bestSubmission.score || 0;
+        passedTestCases = bestSubmission.testCaseResults 
+          ? bestSubmission.testCaseResults.filter(tc => tc.passed).length 
+          : 0;
+      }
+      totalScore += bestScore;
+      questionBreakdown.push({
+        questionId: question._id,
+        title: question.title,
+        difficulty: question.difficulty,
+        maxScore: question.scoreWeight,
+        scoreObtained: bestScore,
+        totalTestCases,
+        passedTestCases,
+        status: bestSubmission ? bestSubmission.status : 'unattempted'
+      });
+    }
+    // 4. Update the attempt record
+    attempt.status = 'submitted';
+    attempt.submittedAt = new Date();
+    attempt.totalScore = totalScore;
+    await attempt.save();
+    const percentage = maxPossibleScore > 0 
+      ? Number(((totalScore / maxPossibleScore) * 100).toFixed(2)) 
+      : 0;
+    // 5. Configurable Result Feedback: Check if recruiter allowed immediate results
+    if (!assessment.showResultsImmediately) {
+      return res.status(200).json({
+        message: "Assessment submitted successfully.",
+        resultsHidden: true,
+        feedbackMessage: "Your answers have been recorded. Results will be made available once the recruiter closes the assessment.",
+        submittedAt: attempt.submittedAt
+      });
+    }
+    // Return immediate score feedback
+    return res.status(200).json({
+      message: "Assessment submitted and auto-graded successfully.",
+      resultsHidden: false,
+      summary: {
+        totalScore,
+        maxPossibleScore,
+        percentage,
+        submittedAt: attempt.submittedAt,
+        timeTakenMinutes: Math.round((attempt.submittedAt - attempt.startedAt) / 60000)
+      },
+      questionBreakdown
     });
   } catch (err) {
-    console.error("Submit assessment error:", err);
-    return res.status(500).json({ message: "Server error." });
+    console.error("Submit and grading assessment error:", err);
+    return res.status(500).json({ message: "Server error during grading." });
   }
 };

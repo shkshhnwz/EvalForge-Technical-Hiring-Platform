@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { SignUp, Login } from './modules/authentication';
 import AssessmentLanding from './modules/Assesment/AssesmentLanding';
 import AssessmentDashboard from './modules/Assesment/AssesmentDashboard';
+import AssessmentResult from './modules/Assesment/AssesmentResult';
 
-// Mock assessment context (in production, fetch this from /api/assessments/:id)
 const MOCK_ASSESSMENT = {
   _id: 'a1_id',
   title: 'Backend Engineering Assessment',
@@ -16,6 +14,7 @@ const MOCK_ASSESSMENT = {
       title: 'Reverse a Linked List',
       description: 'Given the head of a singly linked list, reverse the list and return its head.',
       starterCode: 'function reverseList(head) {\n  // Write your code here\n}',
+      scoreWeight: 10,
       testCases: [
         { input: '[1, 2, 3, 4]', expectedOutput: '[4, 3, 2, 1]', isHidden: false }
       ]
@@ -23,23 +22,38 @@ const MOCK_ASSESSMENT = {
   ]
 };
 
-function AssessmentWorkspace() {
-  const [view, setView] = useState('instructions'); // 'instructions' or 'dashboard'
 
-  const handleFinalSubmit = (codeDrafts) => {
-    console.log('Final submissions payload:', codeDrafts);
-    alert('Assessment submitted successfully!');
-    setView('instructions'); // back or to a success page
+function AssessmentWorkspace() {
+  const [view, setView] = useState('instructions'); // 'instructions' | 'dashboard' | 'result'
+  const [resultData, setResultData] = useState(null);
+
+  const handleFinalSubmit = async () => {
+    try {
+      const response = await fetch('/api/assessments/active/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      setResultData(data);
+      setView('result');
+    } catch (err) {
+      console.error("Submission error:", err);
+      alert("Failed to submit assessment. Please check your connection.");
+    }
   };
 
   return (
     <>
-      {view === 'instructions' ? (
+      {view === 'instructions' && (
         <AssessmentLanding 
           assessment={MOCK_ASSESSMENT} 
           onStart={() => setView('dashboard')} 
         />
-      ) : (
+      )}
+      {view === 'dashboard' && (
         <AssessmentDashboard 
           assessment={MOCK_ASSESSMENT}
           questions={MOCK_ASSESSMENT.questions}
@@ -47,21 +61,14 @@ function AssessmentWorkspace() {
           onFinalSubmit={handleFinalSubmit}
         />
       )}
+      {view === 'result' && (
+        <AssessmentResult 
+          resultData={resultData} 
+          onGoHome={() => setView('instructions')} 
+        />
+      )}
     </>
   );
 }
+export default AssessmentWorkspace;
 
-function App() {
-  return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Navigate to="/signup" replace />} />
-        <Route path="/signup" element={<SignUp />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/assessment" element={<AssessmentWorkspace />} />
-      </Routes>
-    </Router>
-  );
-}
-
-export default App;
