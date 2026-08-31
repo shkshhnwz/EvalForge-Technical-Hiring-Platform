@@ -14,6 +14,7 @@ const UserRouter = require('./src/modules/Authentication&Roles/auth.routes');
 const OrgRouter = require('./src/modules/Organizations/org.routes');
 const AssessmentRouter = require('./src/modules/Assessments/assesment.routes');
 const QuestionRouter = require('./src/modules/Questions/question.routes');
+const AnalyticsRouter = require('./src/modules/Analytics/analytics.routes');
 const { startWorker } = require('./src/modules/CodeExecution/worker');
 const SubmissionRouter = require('./src/modules/Submissions/submission.routes');
 
@@ -28,6 +29,7 @@ app.use('/api/organization', OrgRouter);
 app.use('/api/assessments', AssessmentRouter);
 app.use('/api/questions', QuestionRouter);
 app.use('/api/submissions', SubmissionRouter);
+app.use('/api/analytics', AnalyticsRouter);
 
 // Start Worker after DB Connection
 mongoose.connect(process.env.MONGO_URI)
