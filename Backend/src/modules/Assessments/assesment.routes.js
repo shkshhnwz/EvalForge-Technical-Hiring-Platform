@@ -9,7 +9,9 @@ const {
     getRecruiterAssessments, 
     updateAssessment,
     bulkEmailInvite,
-    csvInvite
+    csvInvite,
+    startCandidateAssessment,
+    submitCandidateAssessment
 } = require('./assesment.controller');
 
 const { requireAuth, authorizeRoles } = require('../Authentication&Roles/auth.middleware');

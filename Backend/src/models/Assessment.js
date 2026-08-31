@@ -40,6 +40,10 @@ const AssessmentSchema = new mongoose.Schema(
       type: String,
       unique: true,
       default: () => crypto.randomUUID()
+    },
+    showResultsImmediately: {
+      type: Boolean,
+      default: false
     }
   },
   {

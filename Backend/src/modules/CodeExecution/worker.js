@@ -110,16 +110,16 @@ const processSubmissionJob = async (job) => {
     for (let i = 0; i < executedSubmissions.length; i++) {
       const execResult = executedSubmissions[i];
       const testCase = testCases[i];
-      
+
       const runtime = execResult.time ? parseFloat(execResult.time) * 1000 : 0; // seconds to ms
       const memory = execResult.memory || 0; // in KB
       const stdout = decodeBase64(execResult.stdout);
       const stderr = decodeBase64(execResult.stderr || execResult.compile_output);
-      
+
       // Judge0 Status ID maps:
       // 3 = Accepted, 4 = Wrong Answer, 5 = Time Limit Exceeded, 6 = Compilation Error, 7-12 = Runtime Errors
       const statusId = execResult.status ? execResult.status.id : 4;
-      
+
       let testCaseStatus = 'wrong_answer';
       let passed = false;
 
@@ -149,8 +149,9 @@ const processSubmissionJob = async (job) => {
 
     // 5. Evaluate overall submission grade
     const overallStatus = evaluateSubmissionStatus(results);
-    const finalScore = testCases.length > 0 
-      ? Math.round((passedCount / testCases.length) * question.scoreWeight) 
+    const weight = question.scoreWeight || 10;
+    const finalScore = testCases.length > 0
+      ? Number(((passedCount / testCases.length) * weight).toFixed(2))
       : 0;
 
     submission.status = overallStatus;
@@ -163,14 +164,14 @@ const processSubmissionJob = async (job) => {
   } catch (error) {
     // 6. Handle hosted service unavailability
     console.error(`[Worker] Error running code execution for submission ${submissionId}:`, error.message);
-    
+
     // Check if it's a network availability issue
     if (!error.response || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
       submission.status = 'Execution Service Unavailable';
     } else {
       submission.status = 'runtime_error'; // API returned bad request or JSON parse error
     }
-    
+
     await submission.save();
   }
 };
