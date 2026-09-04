@@ -1,9 +1,20 @@
 const {Queue} = require('bullmq');
 const Redis = require('ioredis');
 
-// Connect to Redis
-const redisConnection = new Redis(process.env.REDIS_URI || 'redis://127.0.0.1:6379', {
+// Connect to Redis (supports both REDIS_URL and REDIS_URI, with rediss:// TLS support)
+const redisUrl = process.env.REDIS_URL || process.env.REDIS_URI || 'redis://127.0.0.1:6379';
+
+const redisConnection = new Redis(redisUrl, {
   maxRetriesPerRequest: null, // Required by BullMQ
+  ...(redisUrl.startsWith('rediss://') ? { tls: { rejectUnauthorized: false } } : {}),
+});
+
+redisConnection.on('error', (err) => {
+  console.error('[Redis] Connection Error:', err.message);
+});
+
+redisConnection.on('connect', () => {
+  console.log('[Redis] Connected successfully');
 });
 
 // Initialize the submission queue
