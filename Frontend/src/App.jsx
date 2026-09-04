@@ -1,74 +1,82 @@
-import React, { useState } from 'react';
-import AssessmentLanding from './modules/Assesment/AssesmentLanding';
-import AssessmentDashboard from './modules/Assesment/AssesmentDashboard';
-import AssessmentResult from './modules/Assesment/AssesmentResult';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import ProtectedRoute from './components/common/ProtectedRoute';
 
-const MOCK_ASSESSMENT = {
-  _id: 'a1_id',
-  title: 'Backend Engineering Assessment',
-  description: 'Demonstrate your knowledge of API design, systems, and algorithms.',
-  duration: 60, // 60 minutes
-  questions: [
-    {
-      _id: 'q1_id',
-      title: 'Reverse a Linked List',
-      description: 'Given the head of a singly linked list, reverse the list and return its head.',
-      starterCode: 'function reverseList(head) {\n  // Write your code here\n}',
-      scoreWeight: 10,
-      testCases: [
-        { input: '[1, 2, 3, 4]', expectedOutput: '[4, 3, 2, 1]', isHidden: false }
-      ]
-    }
-  ]
-};
+// Public Pages
+import LandingPage from './pages/public/LandingPage';
+import Login from './modules/authentication/pages/Login';
+import OrgRegisterPage from './pages/public/OrgRegisterPage';
 
+// Recruiter Pages
+import AssessmentsListPage from './pages/recruiter/AssessmentsListPage';
+import AssessmentBuilderPage from './pages/recruiter/AssessmentBuilderPage';
+import QuestionBankPage from './pages/recruiter/QuestionBankPage';
+import RecruiterAnalyticsDashboard from './modules/Analytics/RecruiterAnalyticsDashboard';
 
-function AssessmentWorkspace() {
-  const [view, setView] = useState('instructions'); // 'instructions' | 'dashboard' | 'result'
-  const [resultData, setResultData] = useState(null);
+// Candidate Pages
+import CandidateJoinPage from './pages/candidate/CandidateJoinPage';
+import ActiveTestPage from './pages/candidate/ActiveTestPage';
 
-  const handleFinalSubmit = async () => {
-    try {
-      const response = await fetch('/api/assessments/active/submit', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      const data = await response.json();
-      setResultData(data);
-      setView('result');
-    } catch (err) {
-      console.error("Submission error:", err);
-      alert("Failed to submit assessment. Please check your connection.");
-    }
-  };
-
+export default function App() {
   return (
-    <>
-      {view === 'instructions' && (
-        <AssessmentLanding 
-          assessment={MOCK_ASSESSMENT} 
-          onStart={() => setView('dashboard')} 
-        />
-      )}
-      {view === 'dashboard' && (
-        <AssessmentDashboard 
-          assessment={MOCK_ASSESSMENT}
-          questions={MOCK_ASSESSMENT.questions}
-          initialTime={MOCK_ASSESSMENT.duration * 60}
-          onFinalSubmit={handleFinalSubmit}
-        />
-      )}
-      {view === 'result' && (
-        <AssessmentResult 
-          resultData={resultData} 
-          onGoHome={() => setView('instructions')} 
-        />
-      )}
-    </>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Public Marketing & Auth */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register/company" element={<OrgRegisterPage />} />
+          <Route path="/join/:inviteToken" element={<CandidateJoinPage />} />
+
+          {/* Recruiter Protected Portal */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute allowedRole="recruiter">
+                <AssessmentsListPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/assessments/new"
+            element={
+              <ProtectedRoute allowedRole="recruiter">
+                <AssessmentBuilderPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/assessments/:assessmentId/analytics"
+            element={
+              <ProtectedRoute allowedRole="recruiter">
+                <RecruiterAnalyticsDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/questions"
+            element={
+              <ProtectedRoute allowedRole="recruiter">
+                <QuestionBankPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Candidate Active Assessment */}
+          <Route
+            path="/test/active"
+            element={
+              <ProtectedRoute allowedRole="candidate">
+                <ActiveTestPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
-export default AssessmentWorkspace;
-
