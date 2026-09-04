@@ -1,15 +1,28 @@
 import React, { useState } from 'react';
 import Editor from '@monaco-editor/react';
 import AssessmentTimer from './AssesmentTimer';
+import { 
+  Play, 
+  Send, 
+  CheckCircle2, 
+  AlertCircle, 
+  Code2, 
+  Clock, 
+  Terminal, 
+  Sparkles, 
+  Check 
+} from 'lucide-react';
+
+import { getFullUrl } from '../../services/api';
 
 export default function AssessmentDashboard({ 
   assessment, 
-  questions, 
+  questions = [], 
   initialTime, 
   onFinalSubmit 
 }) {
   const [activeIdx, setActiveIdx] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(initialTime);
+  const [timeLeft, setTimeLeft] = useState(initialTime || 3600);
   const [language, setLanguage] = useState('javascript');
   
   // Track drafts for each question ID
@@ -19,8 +32,23 @@ export default function AssessmentDashboard({
   const [testResults, setTestResults] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
 
-  const activeQuestion = questions[activeIdx];
-  const currentCode = codeDrafts[activeQuestion._id] || activeQuestion.starterCode || '';
+  const activeQuestion = questions[activeIdx] || {
+    _id: 'sample',
+    title: 'Loading Challenge...',
+    description: 'Please wait while question details are loaded.',
+    testCases: []
+  };
+
+  const getStarterCode = (q, lang) => {
+    if (q.starterCode && typeof q.starterCode === 'object') {
+      return q.starterCode[lang] || q.starterCode.javascript || '';
+    }
+    return typeof q.starterCode === 'string' ? q.starterCode : '';
+  };
+
+  const currentCode = codeDrafts[activeQuestion._id] !== undefined
+    ? codeDrafts[activeQuestion._id]
+    : getStarterCode(activeQuestion, language);
 
   const handleEditorChange = (value) => {
     setCodeDrafts(prev => ({ ...prev, [activeQuestion._id]: value }));
@@ -31,40 +59,45 @@ export default function AssessmentDashboard({
 
   // Triggers when time runs out
   const handleTimeout = () => {
-    alert("Time is up! Submitting your work automatically.");
+    alert("Time is up! Submitting your assessment automatically.");
     onFinalSubmit(codeDrafts);
   };
 
-  // Run against sample cases locally or submit to backend
+  // Run against sample cases or submit to backend
   const handleRunCode = async (isSubmit = false) => {
     setIsRunning(true);
     setTestResults(null);
 
     try {
-      // POST request to the API we completed earlier: /api/submissions
-      const response = await fetch('/api/submissions', {
+      const response = await fetch(getFullUrl('/api/submissions'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}` // authentication
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
           assessmentId: assessment._id,
           questionId: activeQuestion._id,
           language,
           code: currentCode,
-          isSubmit, // flag if running visible vs full suite
+          isSubmit,
         })
       });
 
       const data = await response.json();
       
-      if (response.status === 202) {
-        // Poll for submission status using getSubmissionStatus endpoint
+      if (response.status === 202 && data.submissionId) {
         pollSubmissionStatus(data.submissionId);
+      } else if (response.ok && data._id) {
+        setTestResults(data);
+        setIsRunning(false);
+      } else {
+        setTestResults({ status: 'error', stderr: data.message || 'Execution error' });
+        setIsRunning(false);
       }
     } catch (err) {
       console.error(err);
+      setTestResults({ status: 'error', stderr: 'Network or execution service error' });
       setIsRunning(false);
     }
   };
@@ -72,7 +105,7 @@ export default function AssessmentDashboard({
   const pollSubmissionStatus = async (subId) => {
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/submissions/${subId}`, {
+        const response = await fetch(getFullUrl(`/api/submissions/${subId}`), {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
         });
         const data = await response.json();
@@ -90,33 +123,45 @@ export default function AssessmentDashboard({
         clearInterval(interval);
         setIsRunning(false);
       }
-    }, 2000);
+    }, 1500);
   };
 
   return (
-    <div className="h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
-      {/* Header */}
-      <header className="h-14 border-b border-slate-800 bg-slate-900 px-6 flex items-center justify-between">
-        <h2 className="font-bold text-lg text-white">{assessment.title}</h2>
+    <div className="h-screen flex flex-col bg-[#FCFFF7] text-[#00100B] overflow-hidden selection:bg-[#FFE900]">
+      {/* Top Header */}
+      <header className="h-16 border-b-2 border-[#00100B] bg-[#FCFFF7] px-6 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-[#00100B] flex items-center justify-center text-[#52B788]">
+            <Terminal className="w-4 h-4" />
+          </div>
+          <div>
+            <h2 className="font-black text-sm text-[#00100B] tracking-tight">{assessment?.title}</h2>
+            <span className="text-[10px] uppercase font-bold text-[#2E2D4D]">Candidate Assessment Workspace</span>
+          </div>
+        </div>
+
         <div className="flex items-center gap-4">
           <AssessmentTimer timeLeft={timeLeft} setTimeLeft={setTimeLeft} onTimeout={handleTimeout} />
           <button 
-            onClick={() => onFinalSubmit(codeDrafts)}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-sm"
+            onClick={() => {
+              if (window.confirm("Are you sure you want to finish and submit your entire assessment?")) {
+                onFinalSubmit(codeDrafts);
+              }
+            }}
+            className="px-5 py-2 bg-[#00100B] hover:bg-[#2E2D4D] text-[#FCFFF7] font-extrabold rounded-xl text-xs neo-button transition-all flex items-center gap-1.5"
           >
-            Finish Test
+            <Send className="w-3.5 h-3.5 text-[#52B788]" />
+            <span>Finish Test</span>
           </button>
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* Main Split-Screen Workspace */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Drawer / Nav */}
-        <aside className="w-64 border-r border-slate-800 bg-slate-900/50 flex flex-col">
-          <div className="p-4 border-b border-slate-800 font-semibold text-sm text-slate-400">
-            QUESTIONS
-          </div>
-          <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+        {/* Left Side: Questions Drawer & Active Problem Details */}
+        <div className="w-5/12 flex flex-col border-r-2 border-[#00100B] bg-[#FCFFF7] overflow-hidden">
+          {/* Question Tabs Bar */}
+          <div className="p-3 border-b-2 border-[#00100B] bg-black/5 flex items-center gap-2 overflow-x-auto">
             {questions.map((q, idx) => {
               const status = statusMap[q._id] || 'unsolved';
               const isActive = idx === activeIdx;
@@ -124,116 +169,172 @@ export default function AssessmentDashboard({
                 <button
                   key={q._id}
                   onClick={() => setActiveIdx(idx)}
-                  className={`w-full text-left p-3 rounded-lg flex items-center justify-between transition-colors ${
-                    isActive ? 'bg-sky-505/10 border border-sky-500/30 text-sky-400' : 'hover:bg-slate-800 text-slate-300'
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-2 border ${
+                    isActive
+                      ? 'bg-[#00100B] text-[#FCFFF7] border-[#00100B]'
+                      : 'bg-white text-[#2E2D4D] border-[#00100B]/20 hover:border-[#00100B]'
                   }`}
                 >
-                  <span className="truncate text-sm font-medium">{idx + 1}. {q.title}</span>
-                  <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full ${
-                    status === 'solved' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
-                    status === 'attempted' ? 'bg-amber-950 text-amber-400 border border-amber-800' :
-                    'bg-slate-800 text-slate-400'
-                  }`}>
-                    {status}
-                  </span>
+                  <span>Q{idx + 1}</span>
+                  {status === 'solved' ? (
+                    <Check className="w-3 h-3 text-[#52B788]" />
+                  ) : (
+                    <span className="text-[9px] font-mono opacity-80">{q.scoreWeight || 10}p</span>
+                  )}
                 </button>
               );
             })}
-          </nav>
-        </aside>
+          </div>
 
-        {/* Content Pane */}
-        <main className="flex-1 flex overflow-hidden">
-          {/* Question details Panel */}
-          <section className="flex-1 border-r border-slate-800 p-6 overflow-y-auto space-y-4">
-            <h1 className="text-2xl font-bold text-white">{activeQuestion.title}</h1>
-            <div className="prose prose-invert text-slate-300">
-              <p>{activeQuestion.description}</p>
+          {/* Problem Details Scrollable Area */}
+          <div className="flex-1 p-6 overflow-y-auto space-y-6">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`pill-badge text-[9px] ${
+                  activeQuestion.difficulty === 'easy' ? 'bg-[#52B788] text-[#00100B]' :
+                  activeQuestion.difficulty === 'medium' ? 'bg-[#FFE900] text-[#00100B]' : 'bg-[#2E2D4D] text-[#FCFFF7]'
+                }`}>
+                  {activeQuestion.difficulty || 'medium'}
+                </span>
+                <span className="text-xs font-mono font-bold text-[#2E2D4D]">
+                  {activeQuestion.scoreWeight || 10} Points
+                </span>
+              </div>
+              <h1 className="text-xl font-black text-[#00100B]">{activeQuestion.title}</h1>
             </div>
-            
-            {/* Sample Cases */}
-            <div className="mt-8 space-y-4">
-              <h3 className="font-semibold text-slate-200">Sample Test Cases</h3>
+
+            <div className="prose prose-sm text-[#2E2D4D] font-medium leading-relaxed">
+              <p className="whitespace-pre-wrap">{activeQuestion.description}</p>
+            </div>
+
+            {activeQuestion.constraints && (
+              <div className="p-4 rounded-2xl bg-black/5 border border-[#00100B]/15">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#00100B] block mb-1">
+                  Constraints & Edge Cases
+                </span>
+                <p className="text-xs font-mono text-[#2E2D4D]">{activeQuestion.constraints}</p>
+              </div>
+            )}
+
+            {/* Public Sample Test Cases */}
+            <div className="space-y-3 pt-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#00100B] block">
+                Sample Test Cases
+              </span>
               {activeQuestion.testCases?.filter(tc => !tc.isHidden).map((tc, idx) => (
-                <div key={idx} className="bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-sm space-y-2">
+                <div key={idx} className="bg-white border-2 border-[#00100B] rounded-2xl p-4 font-mono text-xs space-y-2 neo-card">
                   <div>
-                    <span className="text-slate-500 block text-xs">Input:</span>
-                    <pre className="text-slate-300 mt-1">{tc.input}</pre>
+                    <span className="text-[10px] text-[#2E2D4D] font-bold uppercase block font-sans">Input:</span>
+                    <pre className="text-[#00100B] bg-black/5 p-2 rounded-lg mt-1 overflow-x-auto">{tc.input}</pre>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-xs">Expected Output:</span>
-                    <pre className="text-emerald-400 mt-1">{tc.expectedOutput}</pre>
+                    <span className="text-[10px] text-[#2E2D4D] font-bold uppercase block font-sans">Expected Output:</span>
+                    <pre className="text-[#52B788] bg-[#00100B] p-2 rounded-lg mt-1 overflow-x-auto font-bold">{tc.expectedOutput}</pre>
                   </div>
                 </div>
               ))}
             </div>
-          </section>
+          </div>
+        </div>
 
-          {/* Monaco Editor Pane */}
-          <section className="flex-1 flex flex-col bg-slate-900">
-            {/* Editor Top Bar */}
-            <div className="h-12 border-b border-slate-800 px-4 flex items-center justify-between">
+        {/* Right Side: Monaco Editor & Output Console */}
+        <div className="w-7/12 flex flex-col bg-[#FCFFF7] overflow-hidden">
+          {/* Editor Header Bar */}
+          <div className="h-12 border-b-2 border-[#00100B] px-4 bg-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold text-[#00100B]">Language:</span>
               <select 
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-sm font-semibold text-slate-300"
+                className="bg-[#FCFFF7] border border-[#00100B] rounded-lg px-2.5 py-1 text-xs font-bold text-[#00100B] outline-hidden cursor-pointer"
               >
-                <option value="javascript">JavaScript</option>
-                <option value="python">Python</option>
+                <option value="javascript">JavaScript (Node.js)</option>
+                <option value="python">Python 3</option>
                 <option value="java">Java</option>
-                <option value="cpp">C++</option>
+                <option value="cpp">C++ (GCC)</option>
               </select>
             </div>
 
-            {/* Monaco Editor */}
-            <div className="flex-1 relative">
-              <Editor
-                height="100%"
-                language={language}
-                theme="vs-dark"
-                value={currentCode}
-                onChange={handleEditorChange}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-                }}
-              />
-            </div>
+            <span className="text-[11px] font-mono text-[#2E2D4D]">Auto-save enabled</span>
+          </div>
 
-            {/* Editor Action Console */}
-            <div className="border-t border-slate-800 p-4 bg-slate-950/60 space-y-4">
-              {/* Test results display */}
-              {testResults && (
-                <div className={`p-4 rounded-lg border text-sm font-mono ${
-                  testResults.status === 'accepted' 
-                    ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-400' 
-                    : 'bg-rose-950/20 border-rose-900/50 text-rose-400'
-                }`}>
-                  <span className="font-bold">Status: {testResults.status.toUpperCase()}</span>
-                  {testResults.stderr && <pre className="mt-2 text-rose-300 text-xs">{testResults.stderr}</pre>}
+          {/* Monaco Editor Container */}
+          <div className="flex-1 relative border-b-2 border-[#00100B]">
+            <Editor
+              height="100%"
+              language={language === 'cpp' ? 'cpp' : language === 'python' ? 'python' : language === 'java' ? 'java' : 'javascript'}
+              theme="vs-dark"
+              value={currentCode}
+              onChange={handleEditorChange}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                padding: { top: 12, bottom: 12 },
+              }}
+            />
+          </div>
+
+          {/* Test Runner & Console */}
+          <div className="p-4 bg-[#FCFFF7] space-y-3 shrink-0">
+            {/* Output Display */}
+            {testResults && (
+              <div className={`p-3 rounded-xl border-2 text-xs font-mono ${
+                testResults.status === 'accepted' 
+                  ? 'bg-green-50 border-[#52B788] text-green-900' 
+                  : 'bg-red-50 border-red-500 text-red-900'
+              }`}>
+                <div className="flex items-center justify-between font-bold">
+                  <span className="flex items-center gap-1.5 uppercase">
+                    {testResults.status === 'accepted' ? (
+                      <CheckCircle2 className="w-4 h-4 text-[#52B788]" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-600" />
+                    )}
+                    Outcome: {testResults.status}
+                  </span>
+                  {testResults.score !== undefined && (
+                    <span>Score Awarded: {testResults.score} pts</span>
+                  )}
                 </div>
-              )}
+                {testResults.stderr && (
+                  <pre className="mt-2 text-red-700 text-[11px] p-2 bg-white rounded-lg border border-red-200 overflow-x-auto whitespace-pre-wrap">
+                    {testResults.stderr}
+                  </pre>
+                )}
+              </div>
+            )}
 
-              <div className="flex justify-end gap-3">
+            {/* Actions Bar */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-[#2E2D4D]">
+                Run sample test cases or submit code for full validation
+              </span>
+
+              <div className="flex items-center gap-3">
                 <button
                   disabled={isRunning}
                   onClick={() => handleRunCode(false)}
-                  className="px-4 py-2 border border-slate-700 hover:border-slate-500 rounded-lg text-sm text-slate-300 font-medium disabled:opacity-50"
+                  className="px-4 py-2 bg-white border-2 border-[#00100B] hover:bg-black/5 rounded-xl text-xs text-[#00100B] font-bold disabled:opacity-50 flex items-center gap-1.5 transition-all"
                 >
-                  {isRunning ? 'Running...' : 'Run Code'}
+                  <Play className="w-3.5 h-3.5" />
+                  <span>{isRunning ? 'Running Sandbox...' : 'Run Code'}</span>
                 </button>
+
                 <button
                   disabled={isRunning}
                   onClick={() => handleRunCode(true)}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-sm text-white font-semibold disabled:opacity-50"
+                  className="px-5 py-2 bg-[#00100B] hover:bg-[#2E2D4D] rounded-xl text-xs text-[#FCFFF7] font-extrabold neo-button disabled:opacity-50 flex items-center gap-1.5 transition-all"
                 >
-                  Submit Code
+                  <Send className="w-3.5 h-3.5 text-[#52B788]" />
+                  <span>Submit Solution</span>
                 </button>
               </div>
             </div>
-          </section>
-        </main>
+          </div>
+        </div>
       </div>
     </div>
   );

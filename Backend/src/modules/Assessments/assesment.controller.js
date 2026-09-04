@@ -3,16 +3,20 @@ const bcrypt = require('bcrypt');
 const multer = require('multer');
 const csv = require('csv-parser');
 const fs = require('fs');
-const Questions = require('../../models/Question');
-const { sendAssesmentInvite } = require('../Notifications/email.service');
+const Question = require('../../models/Question');
+const { 
+    sendAssessmentInvite, 
+    sendClosingSoonReminder, 
+    sendCandidateCompletedNotification 
+} = require('../Notifications/email.service');
 const Assessment = require('../../models/Assessment');
 const AssessmentAttempt = require('../../models/AssesmentAttempts');
 const Submission = require('../../models/Submissions');
 const User = require('../../models/Users');
 const { generateToken } = require('../Authentication&Roles/auth.controller');
 
-//Creation of Assesment
-exports.createAssesment = async (req, res) => {
+// Creation of Assessment
+exports.createAssessment = async (req, res) => {
     try {
         const { title, description, timeLimit, allowedLanguages, questions } = req.body;
         const orgId = req.user.orgId;
@@ -26,7 +30,7 @@ exports.createAssesment = async (req, res) => {
             }
         }
 
-        const newAssesment = await Assessment.create({
+        const newAssessment = await Assessment.create({
             title,
             description,
             timeLimit,
@@ -44,7 +48,8 @@ exports.createAssesment = async (req, res) => {
         console.error("Create assessment error:", err);
         return res.status(500).json({ message: "Server error while creating assessment." });
     }
-}
+};
+exports.createAssesment = exports.createAssessment;
 
 exports.getRecruiterAssessments = async (req, res) => {
     try {
@@ -84,7 +89,7 @@ exports.bulkEmailInvite = async (req, res) => {
     try {
         const { id } = req.params;
         const { candidates } = req.body;
-        const { orgId } = req.user.orgId;
+        const orgId = req.user.orgId;
         const assessment = await Assessment.findOne({ _id: id, orgId });
         if (!assessment) {
             return res.status(404).json({ message: "Assessment not found." });
@@ -93,21 +98,20 @@ exports.bulkEmailInvite = async (req, res) => {
             return res.status(400).json({ message: "Candidates array is required." });
         }
         const invitePromises = candidates.map(candidate => {
-            const inviteLink = `${process.env.FRONTEND_URL}/candidate/join/${assessment.inviteToken}`;
+            const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
             return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
                 .catch(err => {
                     console.error(`Failed to invite ${candidate.email}`, err);
-                })
+                });
         });
         await Promise.all(invitePromises);
         return res.status(200).json({ message: "Candidates invited successfully" });
-
 
     } catch (err) {
         console.error("Bulk invite error:", err);
         return res.status(500).json({ message: "Server error." });
     }
-}
+};
 
 exports.csvInvite = async (req, res) => {
     try {
@@ -376,6 +380,32 @@ exports.submitCandidateAssessment = async (req, res) => {
     const percentage = maxPossibleScore > 0 
       ? Number(((totalScore / maxPossibleScore) * 100).toFixed(2)) 
       : 0;
+
+    // Asynchronously notify recruiter of the completed submission
+    (async () => {
+      try {
+        const candidate = await User.findById(candidateId);
+        let recruiterEmail = null;
+        if (assessment.orgId) {
+          const recruiter = await User.findOne({ orgId: assessment.orgId, role: 'recruiter' });
+          if (recruiter) recruiterEmail = recruiter.email;
+        }
+        if (recruiterEmail) {
+          await sendCandidateCompletedNotification({
+            recruiterEmail,
+            candidateName: candidate ? candidate.name : 'Candidate',
+            candidateEmail: candidate ? candidate.email : '',
+            assessmentTitle: assessment.title,
+            score: totalScore,
+            totalScore: maxPossibleScore,
+            reportUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/admin/assessments/${assessment._id}/candidate/${candidateId}`
+          });
+        }
+      } catch (notifyErr) {
+        console.error("Recruiter completion notification email error:", notifyErr);
+      }
+    })();
+
     // 5. Configurable Result Feedback: Check if recruiter allowed immediate results
     if (!assessment.showResultsImmediately) {
       return res.status(200).json({
@@ -401,5 +431,47 @@ exports.submitCandidateAssessment = async (req, res) => {
   } catch (err) {
     console.error("Submit and grading assessment error:", err);
     return res.status(500).json({ message: "Server error during grading." });
+  }
+};
+
+/**
+ * Send 'Assessment closing soon' reminder to uncompleted candidates
+ */
+exports.sendAssessmentReminders = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { candidates, deadlineDate } = req.body;
+    const orgId = req.user.orgId;
+
+    const assessment = await Assessment.findOne({ _id: id, orgId });
+    if (!assessment) {
+      return res.status(404).json({ message: "Assessment not found." });
+    }
+
+    if (!candidates || !Array.isArray(candidates) || candidates.length === 0) {
+      return res.status(400).json({ message: "Candidates array is required." });
+    }
+
+    const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
+
+    const reminderPromises = candidates.map(candidate => {
+      return sendClosingSoonReminder({
+        toEmail: candidate.email,
+        candidateName: candidate.name,
+        assessmentTitle: assessment.title,
+        deadlineDate: deadlineDate || 'Soon',
+        inviteLink
+      }).catch(err => {
+        console.error(`Failed to send reminder to ${candidate.email}:`, err);
+      });
+    });
+
+    await Promise.all(reminderPromises);
+    return res.status(200).json({ 
+      message: `Closing soon reminders sent successfully to ${candidates.length} candidates.` 
+    });
+  } catch (err) {
+    console.error("Send assessment reminders error:", err);
+    return res.status(500).json({ message: "Server error." });
   }
 };

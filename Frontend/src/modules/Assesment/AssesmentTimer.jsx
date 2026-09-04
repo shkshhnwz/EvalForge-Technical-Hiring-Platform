@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Clock, AlertTriangle } from 'lucide-react';
 
 export default function AssessmentTimer({ timeLeft, setTimeLeft, onTimeout }) {
   useEffect(() => {
@@ -23,12 +24,16 @@ export default function AssessmentTimer({ timeLeft, setTimeLeft, onTimeout }) {
   const isLowTime = timeLeft < 300; // less than 5 minutes
 
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border font-mono text-sm ${
+    <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 font-mono text-xs font-bold transition-colors ${
       isLowTime 
-        ? 'bg-rose-950/30 border-rose-800 text-rose-400 animate-pulse' 
-        : 'bg-slate-900 border-slate-800 text-slate-300'
+        ? 'bg-red-50 border-red-500 text-red-700 animate-pulse' 
+        : 'bg-[#00100B] border-[#00100B] text-[#FCFFF7]'
     }`}>
-      <span className="font-semibold">Time Remaining:</span>
+      {isLowTime ? (
+        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+      ) : (
+        <Clock className="w-3.5 h-3.5 text-[#FFE900]" />
+      )}
       <span>{formatTime(timeLeft)}</span>
     </div>
   );
