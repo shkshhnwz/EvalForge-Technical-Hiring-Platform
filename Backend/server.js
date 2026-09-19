@@ -19,8 +19,13 @@ const { startWorker } = require('./src/modules/CodeExecution/worker');
 const SubmissionRouter = require('./src/modules/Submissions/submission.routes');
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:5173',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.trim().replace(/\/$/, '')] : [])
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: allowedOrigins,
   credentials: true
 }));
 app.use(express.json());

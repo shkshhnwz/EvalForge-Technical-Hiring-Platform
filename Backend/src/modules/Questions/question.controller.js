@@ -1,4 +1,4 @@
-const Questions = require('../../models/Question');
+const Question = require('../../models/Question');
 
 // 1. Create a custom question
 exports.createQuestion = async (req, res, next) => {
@@ -7,7 +7,7 @@ exports.createQuestion = async (req, res, next) => {
         if (!title || !description || !difficulty) {
             return res.status(400).json({ message: "Title, description and difficulty are required" });
         }
-        const newQuestion = await Questions.create({
+        const newQuestion = await Question.create({
             title,
             description,
             constraints,
@@ -29,7 +29,7 @@ exports.createQuestion = async (req, res, next) => {
 // 2. Fetch all questions (Question Bank)
 exports.getQuestionBank = async(req,res) =>{
     try{
-        const questions = await Questions.find({}).select('.testCases');
+        const questions = await Question.find({}).select('-testCases');
         return res.status(200).json(questions);
 
     }catch(err){
