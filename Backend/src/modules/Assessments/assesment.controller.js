@@ -37,7 +37,7 @@ exports.createAssessment = async (req, res) => {
             allowedLanguages: allowedLanguages || ['JavaScript', 'python', 'cpp', 'java'],
             questions: questions || [],
             orgId,
-            status: 'draft'
+            status: 'active'
         });
         return res.status(201).json({
             message: "Assessment created successfully",
@@ -179,8 +179,12 @@ exports.joinAssessment = async (req, res) => {
 
         // 2. Find active assessment by invite token
         const assessment = await Assessment.findOne({ inviteToken });
-        if (!assessment || assessment.status !== 'active') {
+        if (!assessment || assessment.status === 'archived') {
             return res.status(404).json({ message: "Assessment not found or is currently inactive." });
+        }
+        if (assessment.status === 'draft') {
+            assessment.status = 'active';
+            await assessment.save();
         }
 
         // 3. Find or auto-register candidate
