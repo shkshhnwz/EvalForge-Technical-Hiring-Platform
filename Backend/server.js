@@ -21,11 +21,32 @@ const SubmissionRouter = require('./src/modules/Submissions/submission.routes');
 // Middleware
 const allowedOrigins = [
   'http://localhost:5173',
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.trim().replace(/\/$/, '')] : [])
+  ...(process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map(url => url.trim().replace(/\/$/, ''))
+    : [])
 ];
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Automatically allow any Vercel domain (production & preview deployments)
+    try {
+      const hostname = new URL(origin).hostname;
+      if (hostname.endsWith('.vercel.app') || hostname === 'localhost') {
+        return callback(null, true);
+      }
+    } catch {
+      // ignore URL parse errors
+    }
+
+    return callback(null, false);
+  },
   credentials: true
 }));
 app.use(express.json());
