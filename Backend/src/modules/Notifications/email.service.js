@@ -1,17 +1,106 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Create Nodemailer Transporter
+// Create Nodemailer Transporter with strict connection timeouts
 const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.mailtrap.io',
-    port: Number(process.env.EMAIL_PORT) || 2525,
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: Number(process.env.EMAIL_PORT) || 587,
+    secure: Number(process.env.EMAIL_PORT) === 465,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
     auth: {
         user: process.env.EMAIL_USER ? process.env.EMAIL_USER.trim() : undefined,
         pass: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : undefined
     }
 });
 
-const DEFAULT_FROM = process.env.EMAIL_FROM || '"EvalForge" <no-reply@evalforge.com>';
+const DEFAULT_FROM = process.env.EMAIL_FROM || 'EvalForge <onboarding@resend.dev>';
+
+/**
+ * Universal email dispatcher: Brevo / Resend HTTPS API (works on Render/cloud) with SMTP fallback
+ */
+const sendEmail = async ({ to, subject, html }) => {
+    const brevoKey = process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.trim() : null;
+    const resendKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
+    const senderEmail = (process.env.EMAIL_USER || 'shahnawazshaikh67967@gmail.com').trim();
+
+    // 1. Try Brevo (Supports sending to ANY recipient without a custom domain!)
+    if (brevoKey) {
+        try {
+            const recipients = (Array.isArray(to) ? to : [to]).map(email => ({ email }));
+            const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+                method: 'POST',
+                headers: {
+                    'accept': 'application/json',
+                    'api-key': brevoKey,
+                    'content-type': 'application/json'
+                },
+                body: JSON.stringify({
+                    sender: { name: 'EvalForge', email: senderEmail },
+                    to: recipients,
+                    subject,
+                    htmlContent: html
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                return { success: true, provider: 'brevo', messageId: data.messageId };
+            }
+
+            console.warn(`Brevo HTTP send failed (${res.status}):`, data.message || data);
+            throw new Error(data.message || `Brevo error (${res.status})`);
+        } catch (brevoErr) {
+            console.warn('Brevo error:', brevoErr.message);
+            if (!resendKey && !process.env.EMAIL_USER) throw brevoErr;
+        }
+    }
+
+    // 2. Try Resend
+    if (resendKey) {
+        try {
+            const res = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${resendKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    from: process.env.EMAIL_FROM || 'EvalForge <onboarding@resend.dev>',
+                    to: Array.isArray(to) ? to : [to],
+                    subject,
+                    html
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                return { success: true, provider: 'resend', id: data.id };
+            }
+
+            console.warn(`Resend HTTP send failed (${res.status}):`, data.message || data);
+            if (!process.env.EMAIL_USER) {
+                throw new Error(data.message || `Resend error (${res.status})`);
+            }
+        } catch (resendErr) {
+            console.warn('Resend error, attempting SMTP fallback:', resendErr.message);
+            if (!process.env.EMAIL_USER) throw resendErr;
+        }
+    }
+
+    // SMTP Fallback
+    const fromAddr = process.env.EMAIL_USER 
+        ? `"EvalForge" <${process.env.EMAIL_USER.trim()}>` 
+        : DEFAULT_FROM;
+
+    return transporter.sendMail({
+        from: fromAddr,
+        to,
+        subject,
+        html
+    });
+};
 
 /**
  * Send an email invite to a candidate
@@ -21,8 +110,7 @@ const DEFAULT_FROM = process.env.EMAIL_FROM || '"EvalForge" <no-reply@evalforge.
  * @param {string} inviteLink 
  */
 const sendAssessmentInvite = async (toEmail, candidateName, assessmentTitle, inviteLink) => {
-    const mailOptions = {
-        from: DEFAULT_FROM,
+    return sendEmail({
         to: toEmail,
         subject: `Invitation to complete assessment: ${assessmentTitle}`,
         html: `
@@ -41,17 +129,14 @@ const sendAssessmentInvite = async (toEmail, candidateName, assessmentTitle, inv
                 <p style="font-size: 12px; color: #777;">This invite is automated. Please do not reply directly to this email.</p>
             </div>
         `
-    };
-
-    return transporter.sendMail(mailOptions);
+    });
 };
 
 /**
  * Send an 'assessment closing soon' reminder to a candidate
  */
 const sendClosingSoonReminder = async ({ toEmail, candidateName, assessmentTitle, deadlineDate, inviteLink }) => {
-    const mailOptions = {
-        from: DEFAULT_FROM,
+    return sendEmail({
         to: toEmail,
         subject: `⏳ Reminder: Assessment closing soon - ${assessmentTitle}`,
         html: `
@@ -71,9 +156,7 @@ const sendClosingSoonReminder = async ({ toEmail, candidateName, assessmentTitle
                 <p style="font-size: 12px; color: #777;">This is an automated notification from EvalForge.</p>
             </div>
         `
-    };
-
-    return transporter.sendMail(mailOptions);
+    });
 };
 
 /**
@@ -89,8 +172,7 @@ const sendCandidateCompletedNotification = async ({
     reportUrl
 }) => {
     const percentage = totalScore > 0 ? ((score / totalScore) * 100).toFixed(1) : 0;
-    const mailOptions = {
-        from: DEFAULT_FROM,
+    return sendEmail({
         to: recruiterEmail,
         subject: `New Submission: ${candidateName || 'Candidate'} completed ${assessmentTitle}`,
         html: `
@@ -123,9 +205,7 @@ const sendCandidateCompletedNotification = async ({
                 <p style="font-size: 12px; color: #777;">This is an automated recruiter notification from EvalForge.</p>
             </div>
         `
-    };
-
-    return transporter.sendMail(mailOptions);
+    });
 };
 
 module.exports = {

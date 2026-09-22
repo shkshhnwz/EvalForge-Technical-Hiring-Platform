@@ -128,16 +128,44 @@ exports.bulkEmailInvite = async (req, res) => {
         await assessment.save();
 
         const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
-        const invitePromises = validCandidates.map(candidate => {
-            const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
-            return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
-                .catch(err => {
-                    console.error(`Failed to invite ${candidate.email}`, err);
-                });
-        });
-        await Promise.all(invitePromises);
+        const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
+
+        let sentCount = 0;
+        const failedErrors = [];
+
+        await Promise.all(
+            validCandidates.map(async (candidate) => {
+                try {
+                    await sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink);
+                    sentCount++;
+                } catch (err) {
+                    console.error(`Failed to invite ${candidate.email}:`, err.message);
+                    failedErrors.push({ email: candidate.email, error: err.message });
+                }
+            })
+        );
+
+        if (sentCount === 0 && failedErrors.length > 0) {
+            const firstErr = failedErrors[0].error || '';
+            let detail = firstErr;
+            if (firstErr.includes('only send testing emails to your own email address')) {
+                detail = 'Resend sandbox requires verifying a custom domain at resend.com/domains to send to external candidates. Alternatively, copy and share the link from the Direct Link tab!';
+            }
+            return res.status(502).json({ 
+                message: `Failed to dispatch emails: ${detail}`,
+                failedErrors 
+            });
+        }
+
+        let responseMsg = `Successfully sent ${sentCount} invitation(s).`;
+        if (failedErrors.length > 0) {
+            responseMsg += ` (${failedErrors.length} failed to send).`;
+        }
+
         return res.status(200).json({ 
-            message: `Successfully invited ${validCandidates.length} candidate(s).` 
+            message: responseMsg,
+            sentCount,
+            failedCount: failedErrors.length
         });
 
     } catch (err) {
@@ -562,22 +590,38 @@ exports.sendAssessmentReminders = async (req, res) => {
     const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
     const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
 
-    const reminderPromises = targetCandidates.map(candidate => {
-      return sendClosingSoonReminder({
-        toEmail: candidate.email,
-        candidateName: candidate.name,
-        assessmentTitle: assessment.title,
-        deadlineDate: deadlineDate || 'Soon',
-        inviteLink
-      }).catch(err => {
-        console.error(`Failed to send reminder to ${candidate.email}:`, err);
-      });
-    });
+    let sentCount = 0;
+    const failedErrors = [];
 
-    await Promise.all(reminderPromises);
+    await Promise.all(
+      targetCandidates.map(async (candidate) => {
+        try {
+          await sendClosingSoonReminder({
+            toEmail: candidate.email,
+            candidateName: candidate.name,
+            assessmentTitle: assessment.title,
+            deadlineDate: deadlineDate || 'Soon',
+            inviteLink
+          });
+          sentCount++;
+        } catch (err) {
+          console.error(`Failed to send reminder to ${candidate.email}:`, err.message);
+          failedErrors.push({ email: candidate.email, error: err.message });
+        }
+      })
+    );
+
+    if (sentCount === 0 && failedErrors.length > 0) {
+      const firstErr = failedErrors[0].error || '';
+      return res.status(502).json({
+        message: `Failed to dispatch reminder emails: ${firstErr}`,
+        failedErrors
+      });
+    }
+
     return res.status(200).json({ 
-      message: `Closing soon reminders sent successfully to ${targetCandidates.length} candidate(s).`,
-      count: targetCandidates.length
+      message: `Closing soon reminders sent successfully to ${sentCount} candidate(s).`,
+      count: sentCount
     });
   } catch (err) {
     console.error("Send assessment reminders error:", err);
