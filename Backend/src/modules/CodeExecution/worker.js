@@ -32,21 +32,94 @@ const getJudge0Config = () => {
 };
 
 /**
- * Automatically wrap candidate code if starter template signature is used (e.g. function solution(input))
+ * Safely get starter code string from question map or object
  */
-const wrapCodeForExecution = (code, language) => {
+const getStarterCodeString = (starterCodeMap, language) => {
+  if (!starterCodeMap) return '';
+  const langKey = (language || '').toLowerCase();
+  if (typeof starterCodeMap.get === 'function') {
+    return starterCodeMap.get(langKey) || starterCodeMap.get(language) || '';
+  }
+  return starterCodeMap[langKey] || starterCodeMap[language] || '';
+};
+
+/**
+ * Dynamically extract function name from starterCode or candidate code
+ */
+const extractFunctionName = (code, starterCode, language) => {
+  const lang = (language || '').toLowerCase();
+  const sources = [starterCode, code];
+
+  if (lang === 'javascript' || lang === 'node') {
+    for (const src of sources) {
+      if (!src) continue;
+      const funcMatch = src.match(/(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/);
+      if (funcMatch && funcMatch[1]) return funcMatch[1];
+      const varMatch = src.match(/(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s*)?(?:function|\([^)]*\)\s*=>|[a-zA-Z_$][a-zA-Z0-9_$]*\s*=>)/);
+      if (varMatch && varMatch[1]) return varMatch[1];
+    }
+  } else if (lang === 'python' || lang === 'python3') {
+    for (const src of sources) {
+      if (!src) continue;
+      const match = src.match(/def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/);
+      if (match && match[1]) return match[1];
+    }
+  }
+  return 'solution';
+};
+
+/**
+ * Normalize output values (JSON, whitespace, newlines) for deterministic comparison
+ */
+const normalizeOutput = (val) => {
+  if (val === undefined || val === null) return '';
+  const trimmed = String(val).trim();
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed);
+  } catch {
+    return trimmed.replace(/\r\n/g, '\n').trim();
+  }
+};
+
+/**
+ * Automatically wrap candidate code with stdin parser, dynamic function invocation, and output serialization
+ */
+const wrapCodeForExecution = (code, language, starterCode = '') => {
   const lang = (language || '').toLowerCase();
   if (lang === 'javascript' || lang === 'node') {
     if (!code.includes('readFileSync') && !code.includes('process.stdin') && !code.includes('readline')) {
+      const fnName = extractFunctionName(code, starterCode, 'javascript');
       return `${code}
 const fs = require('fs');
 try {
-  const raw = fs.readFileSync(0, 'utf-8').trim();
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch (e) { parsed = raw; }
-  const res = solution(parsed);
+  const raw = fs.readFileSync(0, 'utf-8');
+  function parseInputToArgs(text) {
+    if (!text || text.trim() === '') return [];
+    const trimmed = text.trim();
+    const lines = trimmed.split(/\\r?\\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const parseVal = (str) => {
+      try { return JSON.parse(str); } catch {
+        if (!isNaN(str) && str !== '') return Number(str);
+        if (str === 'true') return true;
+        if (str === 'false') return false;
+        if (str === 'null') return null;
+        return str;
+      }
+    };
+    if (lines.length > 1) {
+      return lines.map(parseVal);
+    }
+    return [parseVal(trimmed)];
+  }
+  const args = parseInputToArgs(raw);
+  const targetFn = (typeof ${fnName} === 'function') ? ${fnName} : (typeof solution === 'function' ? solution : null);
+  if (!targetFn) {
+    throw new Error('Function ${fnName} or solution not found');
+  }
+  const res = targetFn(...args);
   if (res !== undefined) {
-    console.log(typeof res === 'object' ? JSON.stringify(res) : res);
+    console.log(typeof res === 'object' && res !== null ? JSON.stringify(res) : res);
   }
 } catch (e) {
   console.error(e);
@@ -55,15 +128,38 @@ try {
     }
   } else if (lang === 'python' || lang === 'python3') {
     if (!code.includes('sys.stdin') && !code.includes('input(')) {
+      const fnName = extractFunctionName(code, starterCode, 'python');
       return `${code}
 import sys, json
+
+def parse_input_to_args(text):
+    if not text or not text.strip():
+        return []
+    trimmed = text.strip()
+    lines = [l.strip() for l in trimmed.splitlines() if l.strip()]
+    def parse_val(s):
+        try:
+            return json.loads(s)
+        except:
+            if s == 'true': return True
+            if s == 'false': return False
+            if s == 'null': return None
+            try:
+                if '.' in s: return float(s)
+                return int(s)
+            except:
+                return s
+    if len(lines) > 1:
+        return [parse_val(l) for l in lines]
+    return [parse_val(trimmed)]
+
 try:
-    raw = sys.stdin.read().strip()
-    try:
-        parsed = json.loads(raw)
-    except:
-        parsed = raw
-    res = solution(parsed)
+    raw = sys.stdin.read()
+    args = parse_input_to_args(raw)
+    target_fn = globals().get('${fnName}') or globals().get('solution')
+    if not target_fn:
+        raise Exception("Function '${fnName}' or 'solution' not found")
+    res = target_fn(*args)
     if res is not None:
         print(json.dumps(res) if isinstance(res, (dict, list)) else res)
 except Exception as e:
@@ -145,7 +241,11 @@ const processSubmissionJob = async (job) => {
 
   try {
     const { apiUrl, headers } = getJudge0Config();
-    const finalSourceCode = wrapCodeForExecution(submission.code, submission.language);
+    const starterCodeStr = getStarterCodeString(question.starterCode, submission.language);
+    const finalSourceCode = wrapCodeForExecution(submission.code, submission.language, starterCodeStr);
+
+    console.log(`[Worker Debug] Submission ID: ${submissionId}, Language: ${submission.language}`);
+    console.log(`[Worker Debug] Detected starterCode exists: ${Boolean(starterCodeStr)}`);
 
     // 3. Submit all test cases to Judge0 via Batch Submission Endpoint
     const submissionsPayload = testCases.map(testCase => ({
@@ -213,10 +313,14 @@ const processSubmissionJob = async (job) => {
       // 3 = Accepted, 4 = Wrong Answer, 5 = Time Limit Exceeded, 6 = Compilation Error, 7-12 = Runtime Errors
       const statusId = execResult.status ? execResult.status.id : 4;
 
+      const normalizedActual = normalizeOutput(stdout);
+      const normalizedExpected = normalizeOutput(testCase.expectedOutput);
+      const isOutputMatch = normalizedActual === normalizedExpected && normalizedActual !== '';
+
       let testCaseStatus = 'wrong_answer';
       let passed = false;
 
-      if (statusId === 3) {
+      if (statusId === 3 || (statusId === 4 && isOutputMatch)) {
         testCaseStatus = 'accepted';
         passed = true;
         passedCount++;
@@ -229,6 +333,16 @@ const processSubmissionJob = async (job) => {
       } else {
         testCaseStatus = 'runtime_error';
       }
+
+      console.log(`[Worker Debug] Test Case ${i + 1}/${testCases.length}:`);
+      console.log(`  Raw Input: ${JSON.stringify(testCase.input)}`);
+      console.log(`  Expected Output: ${JSON.stringify(testCase.expectedOutput)}`);
+      console.log(`  Normalized Expected: ${JSON.stringify(normalizedExpected)}`);
+      console.log(`  Judge0 Status: ${statusId} (${execResult.status?.description || 'Unknown'})`);
+      console.log(`  Raw Stdout: ${JSON.stringify(stdout)}`);
+      console.log(`  Normalized Actual: ${JSON.stringify(normalizedActual)}`);
+      console.log(`  Match: ${isOutputMatch}`);
+      console.log(`  Final Status: ${testCaseStatus}`);
 
       results.push({
         passed,
@@ -298,4 +412,8 @@ const startWorker = async () => {
 
 module.exports = {
   startWorker,
+  wrapCodeForExecution,
+  extractFunctionName,
+  normalizeOutput,
+  processSubmissionJob,
 };
