@@ -29,6 +29,8 @@ export default function AssessmentDashboard({
   const [codeDrafts, setCodeDrafts] = useState({});
   // Track status per question: 'unsolved', 'attempted', 'solved'
   const [statusMap, setStatusMap] = useState({});
+  // Track test results per question
+  const [resultsMap, setResultsMap] = useState({});
   const [testResults, setTestResults] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -55,6 +57,13 @@ export default function AssessmentDashboard({
     if (statusMap[activeQuestion._id] !== 'solved') {
       setStatusMap(prev => ({ ...prev, [activeQuestion._id]: 'attempted' }));
     }
+  };
+
+  const handleSelectQuestion = (idx) => {
+    setActiveIdx(idx);
+    setIsRunning(false);
+    const nextQId = questions[idx]?._id;
+    setTestResults(resultsMap[nextQId] || null);
   };
 
   // Triggers when time runs out
@@ -87,23 +96,39 @@ export default function AssessmentDashboard({
       const data = await response.json();
       
       if (response.status === 202 && data.submissionId) {
-        pollSubmissionStatus(data.submissionId);
+        pollSubmissionStatus(data.submissionId, activeQuestion._id);
       } else if (response.ok && data._id) {
         setTestResults(data);
+        setResultsMap(prev => ({ ...prev, [activeQuestion._id]: data }));
         setIsRunning(false);
       } else {
-        setTestResults({ status: 'error', stderr: data.message || 'Execution error' });
+        const errResult = { status: 'error', stderr: data.message || 'Execution error' };
+        setTestResults(errResult);
+        setResultsMap(prev => ({ ...prev, [activeQuestion._id]: errResult }));
         setIsRunning(false);
       }
     } catch (err) {
       console.error(err);
-      setTestResults({ status: 'error', stderr: 'Network or execution service error' });
+      const errResult = { status: 'error', stderr: 'Network or execution service error' };
+      setTestResults(errResult);
+      setResultsMap(prev => ({ ...prev, [activeQuestion._id]: errResult }));
       setIsRunning(false);
     }
   };
 
-  const pollSubmissionStatus = async (subId) => {
+  const pollSubmissionStatus = async (subId, questionId) => {
+    let attempts = 0;
     const interval = setInterval(async () => {
+      attempts++;
+      if (attempts > 30) { // 45 seconds timeout
+        clearInterval(interval);
+        const timeoutResult = { status: 'timeout', stderr: 'Execution took too long. Please try again.' };
+        setTestResults(timeoutResult);
+        setResultsMap(prev => ({ ...prev, [questionId]: timeoutResult }));
+        setIsRunning(false);
+        return;
+      }
+
       try {
         const response = await fetch(getFullUrl(`/api/submissions/${subId}`), {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
@@ -113,10 +138,11 @@ export default function AssessmentDashboard({
         if (data.status !== 'pending' && data.status !== 'running') {
           clearInterval(interval);
           setTestResults(data);
+          setResultsMap(prev => ({ ...prev, [questionId]: data }));
           setIsRunning(false);
           
           if (data.status === 'accepted') {
-            setStatusMap(prev => ({ ...prev, [activeQuestion._id]: 'solved' }));
+            setStatusMap(prev => ({ ...prev, [questionId]: 'solved' }));
           }
         }
       } catch (err) {
@@ -168,7 +194,7 @@ export default function AssessmentDashboard({
               return (
                 <button
                   key={q._id}
-                  onClick={() => setActiveIdx(idx)}
+                  onClick={() => handleSelectQuestion(idx)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-2 border ${
                     isActive
                       ? 'bg-[#00100B] text-[#FCFFF7] border-[#00100B]'
@@ -259,7 +285,7 @@ export default function AssessmentDashboard({
           </div>
 
           {/* Monaco Editor Container */}
-          <div className="flex-1 relative border-b-2 border-[#00100B]">
+          <div className="flex-1 min-h-0 relative border-b-2 border-[#00100B]">
             <Editor
               height="100%"
               language={language === 'cpp' ? 'cpp' : language === 'python' ? 'python' : language === 'java' ? 'java' : 'javascript'}
@@ -278,10 +304,10 @@ export default function AssessmentDashboard({
           </div>
 
           {/* Test Runner & Console */}
-          <div className="p-4 bg-[#FCFFF7] space-y-3 shrink-0">
+          <div className="p-4 bg-[#FCFFF7] space-y-3 shrink-0 flex flex-col justify-end">
             {/* Output Display */}
             {testResults && (
-              <div className={`p-3 rounded-xl border-2 text-xs font-mono ${
+              <div className={`p-3 rounded-xl border-2 text-xs font-mono max-h-36 overflow-y-auto ${
                 testResults.status === 'accepted' 
                   ? 'bg-green-50 border-[#52B788] text-green-900' 
                   : 'bg-red-50 border-red-500 text-red-900'
@@ -308,16 +334,16 @@ export default function AssessmentDashboard({
             )}
 
             {/* Actions Bar */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between shrink-0">
               <span className="text-[11px] font-medium text-[#2E2D4D]">
                 Run sample test cases or submit code for full validation
               </span>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <button
                   disabled={isRunning}
                   onClick={() => handleRunCode(false)}
-                  className="px-4 py-2 bg-white border-2 border-[#00100B] hover:bg-black/5 rounded-xl text-xs text-[#00100B] font-bold disabled:opacity-50 flex items-center gap-1.5 transition-all"
+                  className="px-4 py-2 bg-white border-2 border-[#00100B] hover:bg-black/5 rounded-xl text-xs text-[#00100B] font-bold disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   <Play className="w-3.5 h-3.5" />
                   <span>{isRunning ? 'Running Sandbox...' : 'Run Code'}</span>
@@ -326,7 +352,7 @@ export default function AssessmentDashboard({
                 <button
                   disabled={isRunning}
                   onClick={() => handleRunCode(true)}
-                  className="px-5 py-2 bg-[#00100B] hover:bg-[#2E2D4D] rounded-xl text-xs text-[#FCFFF7] font-extrabold neo-button disabled:opacity-50 flex items-center gap-1.5 transition-all"
+                  className="px-5 py-2 bg-[#00100B] hover:bg-[#2E2D4D] rounded-xl text-xs text-[#FCFFF7] font-extrabold neo-button disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5 text-[#52B788]" />
                   <span>Submit Solution</span>
