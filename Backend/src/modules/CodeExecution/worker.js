@@ -8,8 +8,72 @@ const { redisConnection } = require('./queue');
 const { languageMap, defaultLimits } = require('./judge0.config');
 
 // Load environment variables for Judge0
-const JUDGE0_API_URL = process.env.JUDGE0_API_URL || 'http://localhost:2358';
-const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY; // RapidAPI Host Key if using RapidAPI
+const getJudge0Config = () => {
+  const rapidKey = process.env.JUDGE0_API_KEY || process.env['X-RAPIDAPI-KEY'];
+  const rapidHost = process.env['X-RAPIDAPI-HOST'];
+  let apiUrl = process.env.JUDGE0_API_URL;
+
+  if (!apiUrl) {
+    if (rapidHost && rapidKey) {
+      apiUrl = `https://${rapidHost}`;
+    } else {
+      apiUrl = 'https://ce.judge0.com';
+    }
+  }
+
+  apiUrl = apiUrl.replace(/\/$/, '');
+  const headers = { 'Content-Type': 'application/json' };
+  if (rapidKey && (apiUrl.includes('rapidapi.com') || rapidHost)) {
+    headers['X-RapidAPI-Key'] = rapidKey.trim();
+    headers['X-RapidAPI-Host'] = rapidHost ? rapidHost.trim() : new URL(apiUrl).hostname;
+  }
+
+  return { apiUrl, headers };
+};
+
+/**
+ * Automatically wrap candidate code if starter template signature is used (e.g. function solution(input))
+ */
+const wrapCodeForExecution = (code, language) => {
+  const lang = (language || '').toLowerCase();
+  if (lang === 'javascript' || lang === 'node') {
+    if (!code.includes('readFileSync') && !code.includes('process.stdin') && !code.includes('readline')) {
+      return `${code}
+const fs = require('fs');
+try {
+  const raw = fs.readFileSync(0, 'utf-8').trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { parsed = raw; }
+  const res = solution(parsed);
+  if (res !== undefined) {
+    console.log(typeof res === 'object' ? JSON.stringify(res) : res);
+  }
+} catch (e) {
+  console.error(e);
+}
+`;
+    }
+  } else if (lang === 'python' || lang === 'python3') {
+    if (!code.includes('sys.stdin') && !code.includes('input(')) {
+      return `${code}
+import sys, json
+try:
+    raw = sys.stdin.read().strip()
+    try:
+        parsed = json.loads(raw)
+    except:
+        parsed = raw
+    res = solution(parsed)
+    if res is not None:
+        print(json.dumps(res) if isinstance(res, (dict, list)) else res)
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+`;
+    }
+  }
+  return code;
+};
 
 /**
  * Base64 helper methods (Judge0 recommends Base64 to bypass special characters and spacing bugs)
@@ -80,35 +144,64 @@ const processSubmissionJob = async (job) => {
   let passedCount = 0;
 
   try {
+    const { apiUrl, headers } = getJudge0Config();
+    const finalSourceCode = wrapCodeForExecution(submission.code, submission.language);
+
     // 3. Submit all test cases to Judge0 via Batch Submission Endpoint
     const submissionsPayload = testCases.map(testCase => ({
       language_id: judge0LangId,
-      source_code: encodeBase64(submission.code),
+      source_code: encodeBase64(finalSourceCode),
       stdin: encodeBase64(testCase.input),
       expected_output: encodeBase64(testCase.expectedOutput),
       cpu_time_limit: question.cpuLimit || defaultLimits.cpuTimeLimit,
       memory_limit: question.memoryLimit || defaultLimits.memoryLimit,
     }));
 
-    // Send payload using base64 encoding to prevent injection or formatting breakages
-    const headers = { 'Content-Type': 'application/json' };
-    if (JUDGE0_API_KEY) {
-      headers['X-RapidAPI-Key'] = JUDGE0_API_KEY;
-      headers['X-RapidAPI-Host'] = new URL(JUDGE0_API_URL).hostname;
+    let batchPostRes;
+    let activeApiUrl = apiUrl;
+    let activeHeaders = headers;
+
+    try {
+      batchPostRes = await axios.post(
+        `${activeApiUrl}/submissions/batch?base64_encoded=true`,
+        { submissions: submissionsPayload },
+        { headers: activeHeaders, timeout: 15000 }
+      );
+    } catch (apiErr) {
+      // If primary endpoint failed (e.g. RapidAPI 403 or localhost refused), fallback to public ce.judge0.com
+      if (activeApiUrl !== 'https://ce.judge0.com') {
+        console.warn(`[Worker] Primary Judge0 (${activeApiUrl}) failed: ${apiErr.message}. Falling back to https://ce.judge0.com`);
+        activeApiUrl = 'https://ce.judge0.com';
+        activeHeaders = { 'Content-Type': 'application/json' };
+        batchPostRes = await axios.post(
+          `${activeApiUrl}/submissions/batch?base64_encoded=true`,
+          { submissions: submissionsPayload },
+          { headers: activeHeaders, timeout: 15000 }
+        );
+      } else {
+        throw apiErr;
+      }
     }
 
-    const response = await axios.post(
-      `${JUDGE0_API_URL}/submissions/batch?base64_encoded=true&wait=true`,
-      { submissions: submissionsPayload },
-      { headers, timeout: 15000 } // Keep a timeout in case service is frozen
-    );
+    // 4. Poll Judge0 batch tokens until execution completes
+    const tokens = (batchPostRes.data || []).map(item => item.token).filter(Boolean).join(',');
+    let executedSubmissions = [];
 
-    // 4. Read execution output
-    // The response will contain an array of submission structures
-    const executedSubmissions = response.data;
+    if (tokens) {
+      for (let pollAttempt = 0; pollAttempt < 15; pollAttempt++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const pollRes = await axios.get(
+          `${activeApiUrl}/submissions/batch?tokens=${tokens}&base64_encoded=true`,
+          { headers: activeHeaders, timeout: 10000 }
+        );
+        executedSubmissions = pollRes.data.submissions || pollRes.data || [];
+        const allFinished = executedSubmissions.every(s => s.status && s.status.id > 2);
+        if (allFinished) break;
+      }
+    }
 
-    for (let i = 0; i < executedSubmissions.length; i++) {
-      const execResult = executedSubmissions[i];
+    for (let i = 0; i < testCases.length; i++) {
+      const execResult = executedSubmissions[i] || {};
       const testCase = testCases[i];
 
       const runtime = execResult.time ? parseFloat(execResult.time) * 1000 : 0; // seconds to ms
