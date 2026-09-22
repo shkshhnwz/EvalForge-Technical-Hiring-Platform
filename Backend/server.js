@@ -18,6 +18,13 @@ const AnalyticsRouter = require('./src/modules/Analytics/analytics.routes');
 const { startWorker } = require('./src/modules/CodeExecution/worker');
 const SubmissionRouter = require('./src/modules/Submissions/submission.routes');
 
+app.get("/health", (req, res) => {
+    res.status(200).json({
+        status: "ok",
+        message: "Server is running"
+    });
+});
+
 // Middleware
 const allowedOrigins = [
   'http://localhost:5173',
