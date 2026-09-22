@@ -97,15 +97,48 @@ exports.bulkEmailInvite = async (req, res) => {
         if (!candidates || !Array.isArray(candidates) || candidates.length === 0) {
             return res.status(400).json({ message: "Candidates array is required." });
         }
-        const invitePromises = candidates.map(candidate => {
-            const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
+
+        // Filter and sanitize valid candidate emails
+        const validCandidates = candidates
+            .map(c => ({
+                name: (c.name || '').trim(),
+                email: (c.email || '').trim().toLowerCase()
+            }))
+            .filter(c => c.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email));
+
+        if (validCandidates.length === 0) {
+            return res.status(400).json({ message: "No valid candidate email addresses found." });
+        }
+
+        // Store invited candidates in assessment
+        if (!assessment.invitedCandidates) {
+            assessment.invitedCandidates = [];
+        }
+        const existingEmails = new Set(assessment.invitedCandidates.map(c => c.email.toLowerCase()));
+        for (const cand of validCandidates) {
+            if (!existingEmails.has(cand.email)) {
+                assessment.invitedCandidates.push({
+                    name: cand.name,
+                    email: cand.email,
+                    invitedAt: new Date()
+                });
+                existingEmails.add(cand.email);
+            }
+        }
+        await assessment.save();
+
+        const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
+        const invitePromises = validCandidates.map(candidate => {
+            const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
             return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
                 .catch(err => {
                     console.error(`Failed to invite ${candidate.email}`, err);
                 });
         });
         await Promise.all(invitePromises);
-        return res.status(200).json({ message: "Candidates invited successfully" });
+        return res.status(200).json({ 
+            message: `Successfully invited ${validCandidates.length} candidate(s).` 
+        });
 
     } catch (err) {
         console.error("Bulk invite error:", err);
@@ -134,8 +167,8 @@ exports.csvInvite = async (req, res) => {
                 // Expects headers "name" and "email" (case-insensitive checking)
                 const name = row.name || row.Name || row.NAME;
                 const email = row.email || row.Email || row.EMAIL;
-                if (email) {
-                    candidates.push({ name: name ? name.trim() : '', email: email.trim() });
+                if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+                    candidates.push({ name: name ? name.trim() : '', email: email.trim().toLowerCase() });
                 }
             })
             .on('end', async () => {
@@ -144,9 +177,28 @@ exports.csvInvite = async (req, res) => {
                 if (candidates.length === 0) {
                     return res.status(400).json({ message: "No valid emails found in the CSV." });
                 }
+
+                // Store invited candidates in assessment
+                if (!assessment.invitedCandidates) {
+                    assessment.invitedCandidates = [];
+                }
+                const existingEmails = new Set(assessment.invitedCandidates.map(c => c.email.toLowerCase()));
+                for (const cand of candidates) {
+                    if (!existingEmails.has(cand.email.toLowerCase())) {
+                        assessment.invitedCandidates.push({
+                            name: cand.name,
+                            email: cand.email.toLowerCase(),
+                            invitedAt: new Date()
+                        });
+                        existingEmails.add(cand.email.toLowerCase());
+                    }
+                }
+                await assessment.save();
+
+                const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
                 // Send Emails
                 const invitePromises = candidates.map(candidate => {
-                    const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
+                    const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
                     return sendAssessmentInvite(candidate.email, candidate.name, assessment.title, inviteLink)
                         .catch(err => console.error(`Failed to send CSV email to ${candidate.email}:`, err));
                 });
@@ -444,7 +496,7 @@ exports.submitCandidateAssessment = async (req, res) => {
 exports.sendAssessmentReminders = async (req, res) => {
   try {
     const { id } = req.params;
-    const { candidates, deadlineDate } = req.body;
+    const { candidates, deadlineDate } = req.body || {};
     const orgId = req.user.orgId;
 
     const assessment = await Assessment.findOne({ _id: id, orgId });
@@ -452,13 +504,65 @@ exports.sendAssessmentReminders = async (req, res) => {
       return res.status(404).json({ message: "Assessment not found." });
     }
 
-    if (!candidates || !Array.isArray(candidates) || candidates.length === 0) {
-      return res.status(400).json({ message: "Candidates array is required." });
+    let targetCandidates = [];
+
+    // 1. If explicitly provided in body
+    if (candidates && Array.isArray(candidates) && candidates.length > 0) {
+      targetCandidates = candidates.filter(c => c && c.email);
+    } else {
+      // 2. Auto-discover candidates who have not completed the assessment
+      const completedAttempts = await AssessmentAttempt.find({
+        assessmentId: id,
+        status: { $in: ['submitted'] }
+      }).populate('candidateId', 'email');
+
+      const completedEmails = new Set(
+        completedAttempts
+          .map(a => a.candidateId?.email?.toLowerCase())
+          .filter(Boolean)
+      );
+
+      // A: Candidates who started an attempt but haven't submitted
+      const inProgressAttempts = await AssessmentAttempt.find({
+        assessmentId: id,
+        status: 'started'
+      }).populate('candidateId', 'name email');
+
+      inProgressAttempts.forEach(att => {
+        const email = att.candidateId?.email?.toLowerCase();
+        if (email && !completedEmails.has(email)) {
+          targetCandidates.push({
+            name: att.candidateId.name || '',
+            email: att.candidateId.email
+          });
+        }
+      });
+
+      // B: Candidates from invitedCandidates roster who haven't completed
+      if (assessment.invitedCandidates && assessment.invitedCandidates.length > 0) {
+        for (const inv of assessment.invitedCandidates) {
+          const emailLower = inv.email.toLowerCase();
+          if (!completedEmails.has(emailLower) && !targetCandidates.some(c => c.email.toLowerCase() === emailLower)) {
+            targetCandidates.push({
+              name: inv.name || '',
+              email: inv.email
+            });
+          }
+        }
+      }
     }
 
-    const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/join/${assessment.inviteToken}`;
+    if (targetCandidates.length === 0) {
+      return res.status(200).json({ 
+        message: "No pending or uncompleted candidates found to remind.",
+        count: 0
+      });
+    }
 
-    const reminderPromises = candidates.map(candidate => {
+    const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
+    const inviteLink = `${baseUrl.replace(/\/$/, '')}/join/${assessment.inviteToken}`;
+
+    const reminderPromises = targetCandidates.map(candidate => {
       return sendClosingSoonReminder({
         toEmail: candidate.email,
         candidateName: candidate.name,
@@ -472,7 +576,8 @@ exports.sendAssessmentReminders = async (req, res) => {
 
     await Promise.all(reminderPromises);
     return res.status(200).json({ 
-      message: `Closing soon reminders sent successfully to ${candidates.length} candidates.` 
+      message: `Closing soon reminders sent successfully to ${targetCandidates.length} candidate(s).`,
+      count: targetCandidates.length
     });
   } catch (err) {
     console.error("Send assessment reminders error:", err);

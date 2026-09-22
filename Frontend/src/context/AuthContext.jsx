@@ -28,17 +28,20 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const setSession = (newToken, newUser) => {
+  const setSession = (newToken, newUser, newRefreshToken) => {
     setToken(newToken);
     setUser(newUser);
     localStorage.setItem('token', newToken);
     localStorage.setItem('user', JSON.stringify(newUser));
+    if (newRefreshToken) {
+      localStorage.setItem('refreshToken', newRefreshToken);
+    }
   };
 
   const login = async (email, password) => {
     const data = await api.post('/api/users/login', { email, password });
     if (data.accessToken && data.user) {
-      setSession(data.accessToken, data.user);
+      setSession(data.accessToken, data.user, data.refreshToken);
     }
     return data;
   };
@@ -61,17 +64,19 @@ export const AuthProvider = ({ children }) => {
       domain: domain || undefined,
     });
     if (data.accessToken && data.user) {
-      setSession(data.accessToken, data.user);
+      setSession(data.accessToken, data.user, data.refreshToken);
     }
     return data;
   };
 
   const logout = () => {
-    api.post('/api/users/logout', {}).catch(() => {});
+    const refreshToken = localStorage.getItem('refreshToken');
+    api.post('/api/users/logout', { refreshToken }).catch(() => {});
     setUser(null);
     setToken(null);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    localStorage.removeItem('refreshToken');
   };
 
   return (

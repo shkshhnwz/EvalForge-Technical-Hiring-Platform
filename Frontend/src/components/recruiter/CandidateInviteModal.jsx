@@ -36,6 +36,14 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
 
   const inviteUrl = `${window.location.origin}/join/${assessment.inviteToken}`;
 
+  const switchTab = (tab) => {
+    setActiveTab(tab);
+    setError(null);
+    setEmailSuccess(null);
+    setCsvSuccess(null);
+    setReminderSuccess(null);
+  };
+
   const handleCopyLink = () => {
     navigator.clipboard.writeText(inviteUrl);
     setCopied(true);
@@ -58,13 +66,47 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
       return;
     }
 
-    const candidates = candidateLines.map(line => {
-      const parts = line.split(',');
-      if (parts.length > 1) {
-        return { name: parts[0].trim(), email: parts[1].trim() };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const candidates = [];
+    const invalidLines = [];
+
+    for (const line of candidateLines) {
+      // Split on comma and remove empty tokens (handles trailing commas cleanly)
+      const parts = line.split(',').map(p => p.trim()).filter(Boolean);
+      let foundEmail = null;
+      let foundName = '';
+
+      if (parts.length >= 2) {
+        const emailIdx = parts.findIndex(p => emailRegex.test(p));
+        if (emailIdx !== -1) {
+          foundEmail = parts[emailIdx];
+          foundName = parts.filter((_, i) => i !== emailIdx).join(' ');
+        } else {
+          const atIdx = parts.findIndex(p => p.includes('@'));
+          if (atIdx !== -1) {
+            foundEmail = parts[atIdx];
+            foundName = parts.filter((_, i) => i !== atIdx).join(' ');
+          }
+        }
+      } else if (parts.length === 1) {
+        const token = parts[0];
+        if (token.includes('@')) {
+          foundEmail = token;
+          foundName = token.split('@')[0];
+        }
       }
-      return { name: line.split('@')[0], email: line.trim() };
-    });
+
+      if (foundEmail && emailRegex.test(foundEmail)) {
+        candidates.push({ name: foundName || foundEmail.split('@')[0], email: foundEmail });
+      } else {
+        invalidLines.push(line);
+      }
+    }
+
+    if (candidates.length === 0) {
+      setError('No valid candidate email addresses could be parsed. Use format: Name, email@example.com');
+      return;
+    }
 
     setEmailLoading(true);
     try {
@@ -144,7 +186,7 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
         {/* Tabs */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-black/5 rounded-2xl mb-6 text-xs font-bold">
           <button
-            onClick={() => setActiveTab('link')}
+            onClick={() => switchTab('link')}
             className={`py-2 rounded-xl transition-all ${
               activeTab === 'link' ? 'bg-[#00100B] text-[#FCFFF7]' : 'text-[#2E2D4D] hover:text-[#00100B]'
             }`}
@@ -152,7 +194,7 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
             Direct Link
           </button>
           <button
-            onClick={() => setActiveTab('email')}
+            onClick={() => switchTab('email')}
             className={`py-2 rounded-xl transition-all ${
               activeTab === 'email' ? 'bg-[#00100B] text-[#FCFFF7]' : 'text-[#2E2D4D] hover:text-[#00100B]'
             }`}
@@ -160,7 +202,7 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
             Bulk Email
           </button>
           <button
-            onClick={() => setActiveTab('csv')}
+            onClick={() => switchTab('csv')}
             className={`py-2 rounded-xl transition-all ${
               activeTab === 'csv' ? 'bg-[#00100B] text-[#FCFFF7]' : 'text-[#2E2D4D] hover:text-[#00100B]'
             }`}
@@ -168,7 +210,7 @@ export default function CandidateInviteModal({ assessment, isOpen, onClose }) {
             CSV Upload
           </button>
           <button
-            onClick={() => setActiveTab('reminder')}
+            onClick={() => switchTab('reminder')}
             className={`py-2 rounded-xl transition-all ${
               activeTab === 'reminder' ? 'bg-[#00100B] text-[#FCFFF7]' : 'text-[#2E2D4D] hover:text-[#00100B]'
             }`}

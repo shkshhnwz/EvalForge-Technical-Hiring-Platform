@@ -44,7 +44,14 @@ const AssessmentSchema = new mongoose.Schema(
     showResultsImmediately: {
       type: Boolean,
       default: false
-    }
+    },
+    invitedCandidates: [
+      {
+        name: { type: String, default: '' },
+        email: { type: String, required: true, lowercase: true, trim: true },
+        invitedAt: { type: Date, default: Date.now }
+      }
+    ]
   },
   {
     timestamps: true

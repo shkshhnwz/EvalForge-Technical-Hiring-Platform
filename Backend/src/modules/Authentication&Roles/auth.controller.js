@@ -8,11 +8,11 @@ const crypto = require('crypto');
 const generateToken = async (user) => {
     const accessToken = jwt.sign({ id: user._id, role: user.role, orgId: user.orgId },
         process.env.JWT_SECRET,
-        { expiresIn: '15m' }
+        { expiresIn: '7d' }
     );
-    const refreshToken = jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+    const refreshToken = jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '30d' });
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    expiresAt.setDate(expiresAt.getDate() + 30);
 
     await RefreshToken.create({
         userId: user._id,
